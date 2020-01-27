@@ -175,13 +175,20 @@ func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key str
 	return nil
 }
 
+func average(sum, n int64) float64 {
+	if n == 0 {
+		return 0.0
+	}
+	return float64(sum) / float64(n)
+}
+
 func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 	var deletedKeyCount, deletedValuesTotalSize, failedDeleteCount int64
 
 	fmt.Fprintf(os.Stderr, "> deleting keys with value matching %s\n", search)
 	defer func() {
-		fmt.Fprintf(os.Stderr, "> deleted %d keys (%d total size) matching %s, %d keys failed delete\n",
-			deletedKeyCount, deletedValuesTotalSize, search, failedDeleteCount)
+		fmt.Fprintf(os.Stderr, "> deleted %d keys (%d total size, average size: %.1f) matching %s, %d keys failed delete\n",
+			deletedKeyCount, deletedValuesTotalSize, average(deletedValuesTotalSize, deletedKeyCount), search, failedDeleteCount)
 	}()
 
 	return r.matchingKeysDo(search, func(key string, value []byte) error {
@@ -202,8 +209,8 @@ func (r redisSearch) listMatchingKeys(search *searchCondition) error {
 
 	fmt.Fprintf(os.Stderr, "> listing keys with value matching %s\n", search)
 	defer func() {
-		fmt.Fprintf(os.Stderr, "> found %d keys (total size of values: %d) matching %s\n",
-			matchingKeyCount, matchingValuesTotalSize, search)
+		fmt.Fprintf(os.Stderr, "> found %d keys (total size: %d, average size: %.1f) matching %s\n",
+			matchingKeyCount, matchingValuesTotalSize, average(matchingValuesTotalSize, matchingKeyCount), search)
 	}()
 
 	return r.matchingKeysDo(search, func(key string, value []byte) error {

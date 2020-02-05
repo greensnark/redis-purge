@@ -60,26 +60,12 @@ contains the search pattern _at least_ that many times.
 	os.Exit(1)
 }
 
-func envInt(name string, defval int) (intValue int) {
-	var err error
-	intValue, err = strconv.Atoi(os.Getenv(name))
-	if err != nil {
-		return defval
-	}
-	return intValue
-}
-
-func envBool(name string) bool {
-	value := strings.ToLower(os.Getenv(name))
-	return value == "y" || value == "yes" || value == "true" || value == "t" || value == "1"
-}
-
 type redisSearch struct {
 	Client *redis.Client
 	Debug  bool
 }
 
-// A searchCondition specifies how to match a Redis value of interest
+// A searchCondition specifies how to find a Redis value of interest
 type searchCondition struct {
 	// SizeThreshold is the minimum size of a search value to be considered
 	SizeThreshold int
@@ -228,6 +214,7 @@ func (r redisSearch) fetchValue(key string) ([]byte, error) {
 func (r redisSearch) deleteKey(key string) error {
 	return r.Client.Del(key).Err()
 }
+
 func redisOptions() *redis.Options {
 	return &redis.Options{
 		Addr: envDefault("REDIS_ADDR", ":6379"),
@@ -240,6 +227,20 @@ func envDefault(envname string, defaultValue string) string {
 		return defaultValue
 	}
 	return envvalue
+}
+
+func envInt(name string, defval int) (intValue int) {
+	var err error
+	intValue, err = strconv.Atoi(os.Getenv(name))
+	if err != nil {
+		return defval
+	}
+	return intValue
+}
+
+func envBool(name string) bool {
+	value := strings.ToLower(os.Getenv(name))
+	return value == "y" || value == "yes" || value == "true" || value == "t" || value == "1"
 }
 
 func reportError(message string, err error) {

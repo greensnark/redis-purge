@@ -104,7 +104,7 @@ func (s *searchCondition) String() string {
 	var description bytes.Buffer
 	fmt.Fprintf(&description, "Search=%s", s.searchDescription())
 	if s.SizeThreshold > 0 {
-		fmt.Fprintf(&description, " (size>=%d bytes)", s.SizeThreshold)
+		fmt.Fprintf(&description, " (size >= %d bytes)", s.SizeThreshold)
 	}
 	if s.Search != "" {
 		if s.Occurrences <= 0 {

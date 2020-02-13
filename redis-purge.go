@@ -54,6 +54,11 @@ with values at least as large as SIZE_THRESHOLD will be considered.
 
 If REQUIRED_MATCH_COUNT is a number >0, then keys are selected if the value
 contains the search pattern _at least_ that many times.
+
+[value] is required to be an exact string match to the redis key's value if
+REQUIRED_MATCH_COUNT is not set. If REQUIRED_MATCH_COUNT is set, [value] is
+required to be a simple substring of the redis key's value with at least
+REQUIRED_MATCH_COUNT occurrences.
 `,
 		os.Args[0])
 

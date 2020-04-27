@@ -20,8 +20,9 @@ func main() {
 	defer redisDB.Close()
 
 	search := redisSearch{
-		Client: redisDB,
-		Debug:  os.Getenv("DEBUG") != "",
+		Client:   redisDB,
+		Debug:    os.Getenv("DEBUG") != "",
+		Progress: envBool("PROGRESS", "true"),
 	}
 
 	needle := &searchCondition{
@@ -30,7 +31,7 @@ func main() {
 		Occurrences:   envInt("REQUIRED_MATCH_COUNT", 0),
 	}
 
-	if envBool("DELETE_MATCHING_KEYS") {
+	if envBool("DELETE_MATCHING_KEYS", "false") {
 		reportError("error deleting keys matching: "+needle.String(), search.deleteMatchingKeys(needle))
 	} else {
 		reportError("error listing keys matching: "+needle.String(), search.listMatchingKeys(needle))
@@ -67,8 +68,9 @@ REQUIRED_MATCH_COUNT occurrences.
 }
 
 type redisSearch struct {
-	Client *redis.Client
-	Debug  bool
+	Client   *redis.Client
+	Debug    bool
+	Progress bool
 }
 
 // A searchCondition specifies how to find a Redis value of interest
@@ -130,12 +132,23 @@ func (s *searchCondition) Matcher() func(value []byte) bool {
 	}
 }
 
+func (r redisSearch) countKeys() (int64, error) {
+	return r.Client.DBSize().Result()
+}
+
 func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key string, value []byte) error) error {
 	valueMatches := search.Matcher()
 
 	var scanCursor uint64
 	var keys []string
 	var err error
+
+	totalKeys, err := r.countKeys()
+	if err != nil {
+		return fmt.Errorf("couldn't count keys: %w", err)
+	}
+
+	var visitingKeys int64
 
 	for {
 		keys, scanCursor, err = r.Client.Scan(scanCursor, "", 50).Result()
@@ -145,6 +158,13 @@ func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key str
 		if r.Debug {
 			fmt.Fprintf(os.Stderr, "> scan cursor: %d, key count: %d\n", scanCursor, len(keys))
 		}
+
+		if r.Progress {
+			fmt.Fprintf(os.Stderr, "Visiting keys %d-%d of %d (%.2f%%)\r",
+				visitingKeys, visitingKeys+int64(len(keys)), totalKeys,
+				percentage(visitingKeys+int64(len(keys)), totalKeys))
+		}
+		visitingKeys += int64(len(keys))
 
 		for _, key := range keys {
 			value, err := r.fetchValue(key)
@@ -165,6 +185,13 @@ func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key str
 		}
 	}
 	return nil
+}
+
+func percentage(num, den int64) float64 {
+	if den == 0 {
+		return 0.0
+	}
+	return float64(num) * 100.0 / float64(den)
 }
 
 func average(sum, n int64) float64 {
@@ -245,8 +272,8 @@ func envInt(name string, defval int) (intValue int) {
 	return intValue
 }
 
-func envBool(name string) bool {
-	value := strings.ToLower(os.Getenv(name))
+func envBool(name, defval string) bool {
+	value := strings.ToLower(envDefault(name, defval))
 	return value == "y" || value == "yes" || value == "true" || value == "t" || value == "1"
 }
 

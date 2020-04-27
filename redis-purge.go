@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-redis/redis"
 )
@@ -183,7 +184,7 @@ func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 	}()
 
 	return r.matchingKeysDo(search, func(key string, value []byte) error {
-		fmt.Println("DELETE", key)
+		fmt.Printf("DELETE %s (size = %d)\n", key, len(value))
 		if err := r.deleteKey(key); err != nil {
 			fmt.Fprintf(os.Stderr, "> failed to delete key %#v: %s, continuing\n", key, err)
 			failedDeleteCount++
@@ -205,7 +206,7 @@ func (r redisSearch) listMatchingKeys(search *searchCondition) error {
 	}()
 
 	return r.matchingKeysDo(search, func(key string, value []byte) error {
-		fmt.Println(key)
+		fmt.Printf("%s (size = %d)\n", key, len(value))
 		matchingKeyCount++
 		matchingValuesTotalSize += int64(len(value))
 		return nil
@@ -222,7 +223,8 @@ func (r redisSearch) deleteKey(key string) error {
 
 func redisOptions() *redis.Options {
 	return &redis.Options{
-		Addr: envDefault("REDIS_ADDR", ":6379"),
+		Addr:        envDefault("REDIS_ADDR", ":6379"),
+		ReadTimeout: time.Duration(envInt("READ_TIMEOUT", 180)) * time.Second,
 	}
 }
 

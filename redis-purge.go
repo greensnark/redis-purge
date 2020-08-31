@@ -36,7 +36,7 @@ func main() {
 	}
 
 	if envBool("DELETE_MATCHING_KEYS", "false") {
-		reportError("error deleting keys matching: "+needle.String(), search.deleteMatchingKeys(needle, envBool("HAMMER", "true")))
+		reportError("error deleting keys matching: "+needle.String(), search.deleteMatchingKeys(needle, envBool("WAIT_AND_REDELETE", "false")))
 	} else {
 		reportError("error listing keys matching: "+needle.String(), search.listMatchingKeys(needle))
 	}
@@ -305,11 +305,16 @@ func (r redisSearch) deleteMatchingKeys(search *searchCondition, repeatDeletes b
 func (r redisSearch) repeatDeleteKeys(keys []string) error {
 	cleanDeletePass := 0
 	deletePass := 0
-	for cleanDeletePass < 10 {
+
+	minCleanDeletePasses := envInt("CLEAN_DELETE_MIN", 500)
+	cleanDeleteIterationWait := envInt("CLEAN_DELETE_WAIT_MS", 150)
+
+	for cleanDeletePass < minCleanDeletePasses {
+		time.Sleep(time.Duration(cleanDeleteIterationWait) * time.Millisecond)
 		deletePass++
 		fmt.Fprintf(os.Stderr,
-			"> repeatDeleteKeys(%d) pass:%d cleanDeletes:%d\n",
-			len(keys), deletePass, cleanDeletePass)
+			"> repeatDeleteKeys(%d) pass:%d cleanDeletes:%d/%d\r",
+			len(keys), deletePass, cleanDeletePass, minCleanDeletePasses)
 		foundResurrectedKeys, err := r.deleteKeys(keys)
 		if err != nil {
 			return err

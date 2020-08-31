@@ -26,6 +26,7 @@ func main() {
 	}
 
 	needle := &searchCondition{
+		AccessMode:    parseValueAccessMode(os.Getenv("ACCESS_MODE")),
 		Search:        os.Args[1],
 		SizeThreshold: envInt("SIZE_THRESHOLD", 0),
 		Occurrences:   envInt("REQUIRED_MATCH_COUNT", 0),
@@ -42,6 +43,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
 
 [REDIS_ADDR=...]           \
+[ACCESS_MODE=string|hash]  \
 [DELETE_MATCHING_KEYS=yes] \
 [REQUIRED_MATCH_COUNT=n]   \
 [SIZE_THRESHOLD=x]         \
@@ -50,6 +52,10 @@ func usage() {
 Deletes all keys with a given value if run with DELETE_MATCHING_KEYS=yes
 or DELETE_MATCHING_KEYS=y in the environment, otherwise lists the keys with
 the given value.
+
+If ACCESS_MODE is hash, values will be treated as redis hashes. If ACCESS_MODE
+is string, values will be treated as simple strings. If unspecified, 
+ACCESS_MODE defaults to hash.
 
 If SIZE_THRESHOLD is set to a number of bytes in the environment, only keys
 with values at least as large as SIZE_THRESHOLD will be considered.
@@ -67,6 +73,56 @@ REQUIRED_MATCH_COUNT occurrences.
 	os.Exit(1)
 }
 
+type valueAccessMode int
+
+const (
+	valueAccessString valueAccessMode = iota
+	valueAccessHash
+)
+
+func (v valueAccessMode) String() string {
+	switch v {
+	case valueAccessString:
+		return "string"
+	case valueAccessHash:
+		return "hash"
+	default:
+		return "?"
+	}
+}
+
+func (v valueAccessMode) Get(c *redis.Client, key string) (body []byte, err error) {
+	switch v {
+	case valueAccessString:
+		return c.Get(key).Bytes()
+	case valueAccessHash:
+		hashValue, err := c.HGetAll(key).Result()
+		if err != nil {
+			return nil, fmt.Errorf("valueAccessHash[%#v]: %w", key, err)
+		}
+		return hashAsBytes(hashValue), nil
+	}
+	panic(fmt.Sprintf("impossible valueAccessMode: %d", v))
+}
+
+func hashAsBytes(valueHash map[string]string) []byte {
+	byteBuf := &bytes.Buffer{}
+	for key, value := range valueHash {
+		byteBuf.Write([]byte(key))
+		byteBuf.Write([]byte(value))
+	}
+	return byteBuf.Bytes()
+}
+
+func parseValueAccessMode(accessMode string) valueAccessMode {
+	switch strings.ToLower(accessMode) {
+	case "string":
+		return valueAccessString
+	default:
+		return valueAccessHash
+	}
+}
+
 type redisSearch struct {
 	Client   *redis.Client
 	Debug    bool
@@ -75,6 +131,10 @@ type redisSearch struct {
 
 // A searchCondition specifies how to find a Redis value of interest
 type searchCondition struct {
+	// AccessMode specifies how redis values should be read, whether
+	// as simple strings, or hashes.
+	AccessMode valueAccessMode
+
 	// SizeThreshold is the minimum size of a search value to be considered
 	SizeThreshold int
 
@@ -96,7 +156,7 @@ func (s *searchCondition) searchDescription() string {
 
 func (s *searchCondition) String() string {
 	var description bytes.Buffer
-	fmt.Fprintf(&description, "Search=%s", s.searchDescription())
+	fmt.Fprintf(&description, "(access-mode=%s) Search=%s", s.AccessMode.String(), s.searchDescription())
 	if s.SizeThreshold > 0 {
 		fmt.Fprintf(&description, " (size >= %d bytes)", s.SizeThreshold)
 	}
@@ -167,7 +227,7 @@ func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key str
 		visitingKeys += int64(len(keys))
 
 		for _, key := range keys {
-			value, err := r.fetchValue(key)
+			value, err := r.fetchValue(key, search.AccessMode)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "> fetchValue error reading %#v (%s), skipping\n", key, err)
 				continue
@@ -240,8 +300,8 @@ func (r redisSearch) listMatchingKeys(search *searchCondition) error {
 	})
 }
 
-func (r redisSearch) fetchValue(key string) ([]byte, error) {
-	return r.Client.Get(key).Bytes()
+func (r redisSearch) fetchValue(key string, accessMode valueAccessMode) ([]byte, error) {
+	return accessMode.Get(r.Client, key)
 }
 
 func (r redisSearch) deleteKey(key string) error {

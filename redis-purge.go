@@ -36,7 +36,7 @@ func main() {
 	}
 
 	if envBool("DELETE_MATCHING_KEYS", "false") {
-		reportError("error deleting keys matching: "+needle.String(), search.deleteMatchingKeys(needle))
+		reportError("error deleting keys matching: "+needle.String(), search.deleteMatchingKeys(needle, envBool("HAMMER", "true")))
 	} else {
 		reportError("error listing keys matching: "+needle.String(), search.listMatchingKeys(needle))
 	}
@@ -273,7 +273,7 @@ func average(sum, n int64) float64 {
 	return float64(sum) / float64(n)
 }
 
-func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
+func (r redisSearch) deleteMatchingKeys(search *searchCondition, repeatDeletes bool) error {
 	var deletedKeyCount, deletedValuesTotalSize, failedDeleteCount int64
 
 	fmt.Fprintf(os.Stderr, "> deleting keys from %s with value matching %s\n", r.String(), search)
@@ -282,8 +282,11 @@ func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 			deletedKeyCount, deletedValuesTotalSize, average(deletedValuesTotalSize, deletedKeyCount), search, failedDeleteCount)
 	}()
 
-	return r.matchingKeysDo(search, func(key string, value []byte) error {
+	var deletedKeys []string
+
+	err := r.matchingKeysDo(search, func(key string, value []byte) error {
 		fmt.Printf("DELETE %s (size = %d)\n", key, len(value))
+		deletedKeys = append(deletedKeys, key)
 		if err := r.deleteKey(key); err != nil {
 			fmt.Fprintf(os.Stderr, "> failed to delete key %#v: %s, continuing\n", key, err)
 			failedDeleteCount++
@@ -293,6 +296,58 @@ func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 		}
 		return nil
 	})
+	if err != nil || !repeatDeletes {
+		return err
+	}
+	return r.repeatDeleteKeys(deletedKeys)
+}
+
+func (r redisSearch) repeatDeleteKeys(keys []string) error {
+	cleanDeletePass := 0
+	deletePass := 0
+	for cleanDeletePass < 10 {
+		deletePass++
+		fmt.Fprintf(os.Stderr,
+			"> repeatDeleteKeys(%d) pass:%d cleanDeletes:%d\n",
+			len(keys), deletePass, cleanDeletePass)
+		foundResurrectedKeys, err := r.deleteKeys(keys)
+		if err != nil {
+			return err
+		}
+		if foundResurrectedKeys {
+			cleanDeletePass = 0
+		} else {
+			cleanDeletePass++
+		}
+	}
+	return nil
+}
+
+func (r redisSearch) keyExists(key string) (exists bool, err error) {
+	var existsInt int64
+	existsInt, err = r.Client.Exists(context.Background(), key).Result()
+	return existsInt > 0, err
+}
+
+func (r redisSearch) deleteKeys(keys []string) (foundKeys bool, err error) {
+	foundKeys = false
+	for _, key := range keys {
+		var keyExists bool
+		keyExists, err = r.keyExists(key)
+		if err != nil {
+			return foundKeys, fmt.Errorf("key EXIST check failed for %s: %w", key, err)
+		}
+		if !keyExists {
+			continue
+		}
+
+		foundKeys = true
+		fmt.Printf("DELETE %s\n", key)
+		if err = r.deleteKey(key); err != nil {
+			return foundKeys, fmt.Errorf("key DELETE fail for %s: %w", key, err)
+		}
+	}
+	return foundKeys, nil
 }
 
 func (r redisSearch) listMatchingKeys(search *searchCondition) error {

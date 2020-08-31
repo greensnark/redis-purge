@@ -6,6 +6,8 @@ optionally delete those keys
 ## Usage
 
     [REDIS_ADDR=...]           \
+    [TLS=y]                    \
+    [ACCESS_MODE=hash]         \
     [DELETE_MATCHING_KEYS=yes] \
     [REQUIRED_MATCH_COUNT=n]   \
     [SIZE_THRESHOLD=x]         \
@@ -14,6 +16,13 @@ optionally delete those keys
 Deletes all keys with a given value if run with `DELETE_MATCHING_KEYS=yes`
 or `DELETE_MATCHING_KEYS=y` in the environment, otherwise lists the keys with
 the given value.
+
+If `TLS`=`y` (the default), then the redis server connection will use TLS
+(rediss://), instead of the plaintext redis protocol.
+
+If `ACCESS_MODE` is `hash`, values will be treated as redis hashes. If `ACCESS_MODE`
+is `string`, values will be treated as simple strings. If unspecified,
+`ACCESS_MODE` defaults to `hash`.
 
 If `SIZE_THRESHOLD` is set to a number of bytes in the environment, only keys
 with values at least as large as `SIZE_THRESHOLD` will be considered.

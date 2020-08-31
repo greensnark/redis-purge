@@ -2,13 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 func main() {
@@ -21,6 +23,7 @@ func main() {
 
 	search := redisSearch{
 		Client:   redisDB,
+		Options:  redisOptions(),
 		Debug:    os.Getenv("DEBUG") != "",
 		Progress: envBool("PROGRESS", "true"),
 	}
@@ -43,7 +46,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
 
 [REDIS_ADDR=...]           \
-[ACCESS_MODE=string|hash]  \
+[TLS=y]                    \
+[ACCESS_MODE=hash]         \
 [DELETE_MATCHING_KEYS=yes] \
 [REQUIRED_MATCH_COUNT=n]   \
 [SIZE_THRESHOLD=x]         \
@@ -53,8 +57,11 @@ Deletes all keys with a given value if run with DELETE_MATCHING_KEYS=yes
 or DELETE_MATCHING_KEYS=y in the environment, otherwise lists the keys with
 the given value.
 
+If TLS=y (the default), then the redis server connection will use TLS
+(rediss://), instead of the plaintext redis protocol.
+
 If ACCESS_MODE is hash, values will be treated as redis hashes. If ACCESS_MODE
-is string, values will be treated as simple strings. If unspecified, 
+is string, values will be treated as simple strings. If unspecified,
 ACCESS_MODE defaults to hash.
 
 If SIZE_THRESHOLD is set to a number of bytes in the environment, only keys
@@ -94,9 +101,9 @@ func (v valueAccessMode) String() string {
 func (v valueAccessMode) Get(c *redis.Client, key string) (body []byte, err error) {
 	switch v {
 	case valueAccessString:
-		return c.Get(key).Bytes()
+		return c.Get(context.Background(), key).Bytes()
 	case valueAccessHash:
-		hashValue, err := c.HGetAll(key).Result()
+		hashValue, err := c.HGetAll(context.Background(), key).Result()
 		if err != nil {
 			return nil, fmt.Errorf("valueAccessHash[%#v]: %w", key, err)
 		}
@@ -125,8 +132,13 @@ func parseValueAccessMode(accessMode string) valueAccessMode {
 
 type redisSearch struct {
 	Client   *redis.Client
+	Options  *redis.Options
 	Debug    bool
 	Progress bool
+}
+
+func (r redisSearch) String() string {
+	return fmt.Sprintf("redis[%s tls=%v]", r.Options.Addr, r.Options.TLSConfig != nil)
 }
 
 // A searchCondition specifies how to find a Redis value of interest
@@ -193,7 +205,7 @@ func (s *searchCondition) Matcher() func(value []byte) bool {
 }
 
 func (r redisSearch) countKeys() (int64, error) {
-	return r.Client.DBSize().Result()
+	return r.Client.DBSize(context.Background()).Result()
 }
 
 func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key string, value []byte) error) error {
@@ -211,7 +223,7 @@ func (r redisSearch) matchingKeysDo(search *searchCondition, action func(key str
 	var visitingKeys int64
 
 	for {
-		keys, scanCursor, err = r.Client.Scan(scanCursor, "", 50).Result()
+		keys, scanCursor, err = r.Client.Scan(context.Background(), scanCursor, "", 50).Result()
 		if err != nil {
 			return err
 		}
@@ -264,7 +276,7 @@ func average(sum, n int64) float64 {
 func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 	var deletedKeyCount, deletedValuesTotalSize, failedDeleteCount int64
 
-	fmt.Fprintf(os.Stderr, "> deleting keys with value matching %s\n", search)
+	fmt.Fprintf(os.Stderr, "> deleting keys from %s with value matching %s\n", r.String(), search)
 	defer func() {
 		fmt.Fprintf(os.Stderr, "> deleted %d keys (%d total size, average size: %.1f) matching %s, %d keys failed delete\n",
 			deletedKeyCount, deletedValuesTotalSize, average(deletedValuesTotalSize, deletedKeyCount), search, failedDeleteCount)
@@ -286,7 +298,7 @@ func (r redisSearch) deleteMatchingKeys(search *searchCondition) error {
 func (r redisSearch) listMatchingKeys(search *searchCondition) error {
 	var matchingKeyCount, matchingValuesTotalSize int64
 
-	fmt.Fprintf(os.Stderr, "> listing keys with value matching %s\n", search)
+	fmt.Fprintf(os.Stderr, "> listing keys on %s with value matching %s\n", r.String(), search)
 	defer func() {
 		fmt.Fprintf(os.Stderr, "> found %d keys (total size: %d, average size: %.1f) matching %s\n",
 			matchingKeyCount, matchingValuesTotalSize, average(matchingValuesTotalSize, matchingKeyCount), search)
@@ -305,13 +317,23 @@ func (r redisSearch) fetchValue(key string, accessMode valueAccessMode) ([]byte,
 }
 
 func (r redisSearch) deleteKey(key string) error {
-	return r.Client.Del(key).Err()
+	return r.Client.Del(context.Background(), key).Err()
+}
+
+func envTLSConfig(tlsEnabled bool) *tls.Config {
+	if !tlsEnabled {
+		return nil
+	}
+	return &tls.Config{
+		InsecureSkipVerify: true,
+	}
 }
 
 func redisOptions() *redis.Options {
 	return &redis.Options{
 		Addr:        envDefault("REDIS_ADDR", ":6379"),
 		ReadTimeout: time.Duration(envInt("READ_TIMEOUT", 180)) * time.Second,
+		TLSConfig:   envTLSConfig(envBool("TLS", "true")),
 	}
 }
 

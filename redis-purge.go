@@ -51,6 +51,8 @@ func usage() {
 [DELETE_MATCHING_KEYS=yes] \
 [REQUIRED_MATCH_COUNT=n]   \
 [SIZE_THRESHOLD=x]         \
+[WAIT_AND_REDELETE=n]      \
+[CLEAN_DELETE_MIN=500]     \
 	%s [value]
 
 Deletes all keys with a given value if run with DELETE_MATCHING_KEYS=yes
@@ -69,6 +71,14 @@ with values at least as large as SIZE_THRESHOLD will be considered.
 
 If REQUIRED_MATCH_COUNT is a number >0, then keys are selected if the value
 contains the search pattern _at least_ that many times.
+
+If WAIT_AND_REDELETE=y (not the default), when deleting keys, wait and
+confirm that the keys have really been deleted, re-deleting them if necessary,
+to work around other redis clients re-inserting the keys. When WAIT_AND_REDELETE
+is true, we'll try at least CLEAN_DELETE_MIN times to delete the offending
+redis keys, waiting CLEAN_DELETE_WAIT_MS milliseconds after each iteration.
+The tool will only exit once CLEAN_DELETE_MIN consecutive checks no longer
+find the keys to be deleted.
 
 [value] is required to be an exact string match to the redis key's value if
 REQUIRED_MATCH_COUNT is not set. If REQUIRED_MATCH_COUNT is set, [value] is
